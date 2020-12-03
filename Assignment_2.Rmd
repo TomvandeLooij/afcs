@@ -1,0 +1,231 @@
+---
+title: "Assignment 2"
+author: "Tom van de Looij - Mark Swaringen - Younes Moustaghfir, Group 30"
+date: "13th of September"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+    fig_width: 4
+    fig_height: 2
+fontsize: 11pt
+classoption: a4paper
+highlight: tango
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,  }
+library(forecast, warn.conflicts=F, quietly=T)
+library(xlsx, warn.conflicts=F, quietly=T)
+library(fpp2, warn.conflicts=F, quietly=T)
+library(seasonal, warn.conflicts=F, quietly=T)
+library(urca)
+library("IRdisplay")
+options(repr.plot.res = 75)
+```
+
+### Exercise 1.1
+a.1 The time series for advert and sales look very similar. Having the `facets = TRUE` option enables us to differentiate between the two time series.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+autoplot(advert, facets = TRUE)
+```
+
+a.2/a.3 Using the standard time series linear model and checking for the residuals we can clearly see that the ACF plot of the residuals does not resemble white noise. We also observe a upwards trend from around month 12. Distribution of the residuals is also not centered around a mean 0.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+fit.standard <- tslm(sales ~ advert, data = advert)
+checkresiduals(fit.standard)
+```
+
+a.4 Using ARIMA(0,0,0) does not make a significant difference with respect to the auto correlation compared to the standard time series linear model. The Ljung-Box test shows a p-value of 2.91e-05 which means that we reject the null hypothesis and accept that the residuals are not independently distributed.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+fit.arima <- Arima(advert[,"sales"], xreg=advert[,"advert"], order=c(0,0,0))
+fit.arima$coef
+checkresiduals(fit.arima)
+```
+
+a.5
+The `auto.arima` function chose an ARIMA(0,1,0) model. The coefficient for the advert variable dropped by about 0.03. AIC, AICc, and BIC values all dropped by about 20 which tells us that the `auto.arima` model performs better than the original model.
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.align="center" }
+fit.autoarima <- auto.arima(advert[,'sales'], xreg=advert[,"advert"])
+fit.autoarima$coef
+fit.autoarima$aic
+```
+
+a.6 Compared to the standard model this model looks a lot better. Residuals show no trend and the ACF plot of the residuals looks more like white noise. The variance of the distribution of the residuals is also smaller and more centered around a mean 0. Ljung-Box test also shows a p-value of 0.8156 which means we cannot reject the null hypothesis. The residuals are randomly distributed.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+checkresiduals(fit.autoarima)
+```
+
+a.7 
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+fc <- forecast(fit.autoarima, h = 6, xreg = rep(10, 6))
+autoplot(fc, series = 'Sales') + 
+  ggtitle('Monthly Sales automotive parts companay') + 
+  xlab('Months') + ylab('Sales')
+```
+
+b.1 We observe that as the number of Fourier Transformation pairs increases the fitted line looks more like the original data.
+```{r echo=FALSE, message=FALSE, warning=FALSE,   fig.width=6, fig.height=4, fig.align="center"}
+data <- window(gasoline, end=2005)
+plots <- list()
+for(num in c(1, 2, 3, 5, 10, 20)){
+  lm <- tslm(data ~ trend + fourier(data,K = num))
+  
+  plots[[num]] <- autoplot(data) +
+      autolayer(lm$fitted.values, series = as.character(num)) +
+      ggtitle(paste("Gasoline fit with", as.character(num))) +
+      ylab("gasoline") +
+      guides(colour = guide_legend(title = "FT Pairs"))
+}
+gridExtra::grid.arrange(
+  plots[[1]],plots[[2]],plots[[3]],
+  plots[[5]],plots[[10]],plots[[20]], nrow=3)
+```
+
+b.2 In order to get a minimum AICc or CV value we need 12 Fourier Transformation pairs.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+values.aic <- list()
+values.cv <- list()
+for(num in 1:26){
+  values.aic[num] <- CV(tslm(data ~ trend + fourier(data, K = num)))[["AICc"]]
+  values.cv[num] <- CV(tslm(data ~ trend + fourier(data, K = num)))[["CV"]]
+}
+print(min(unlist(values.aic)))
+print(which.min(unlist(values.aic)))
+print(min(unlist(values.cv)))
+print(which.min(unlist(values.cv)))
+```
+
+b.3
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+checkresiduals(tslm(data ~ trend + fourier(data, K = 12)))
+```
+
+b.4 The model is able to predict the supply of finished motor gasoline fairly accurate. However, it is unable to predict the big drop in the Q2 of 2005.
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.align="center"  }
+fc <- forecast(tslm(data ~ trend + fourier(data, K = 12)), newdata=data.frame(fourier(data,12,52)))
+autoplot(fc, legendLabs = c('Fitted values')) +
+  autolayer(window(gasoline, start = 2004, end = 2006), series = 'Actual data') + 
+  scale_x_continuous(limits = c(2004, 2006)) + xlab('Time') + ylab('Gasoline supply') +
+  ggtitle('Weekly US finshed motor gasoline supply')
+```
+
+b.5 Data can be divided into three parts: 1991 - mid2007, mid2007 - 2013, 2013 - 2017. The first knot will be set at 2007.5 and the second knot will be set at 2013. By minimising the AICc value we resulted in a Fourier Transformation with 12 pairs.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+t <- time(gasoline)
+t.pw1 <- ts(pmax(0, t - 2007.5), start = t[1], frequency = 365.25/7)
+t.pw2 <- ts(pmax(0, t - 2013), start = t[1], frequency = 365.25/7)
+gasoline.aic <- list()
+AICc <- Inf
+K_min.Aicc <- 0
+for(num in c(1:26)){
+  gasoline.aic[num] <- CV(tslm(gasoline ~ trend + t.pw1 + t.pw2 + fourier(gasoline, K = num)))[["AICc"]]
+}
+gasoline.min <- which.min(unlist(gasoline.aic))
+autoplot(gasoline) +
+  autolayer(tslm(gasoline ~ trend + t.pw1 + t.pw2 + fourier(gasoline, K = gasoline.min))$fitted.values, series = 'Fitted values') +
+  xlab('Time') +
+  ylab('Supply (x million barrels)') +
+  ggtitle('Harmonic regression on US gasoline supply') 
+```
+
+b.6 Because the `auto.arima` function takes way too long to compute a regression with ARIMA(6,0,1) errors has been chosen.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+gasoline.from2000 <- window(gasoline, start = 2000)
+t.from2000 <- window(t, start = 2000)
+t.pw1.from2000 <- window(t.pw1, start = 2000)
+t.pw2.from2000 <- window(t.pw2, start = 2000)
+
+xreg.from2000 <- cbind(
+  t = t.from2000, 
+  t.pw1 = t.pw1.from2000, 
+  t.pw2 = t.pw2.from2000,
+  Fourier = fourier(
+    gasoline.from2000, K = gasoline.min
+    )
+  )
+
+gasoline.arima<- Arima(
+  gasoline.from2000,
+  xreg = xreg.from2000,
+  order = c(6, 0, 1)
+)
+
+summary(gasoline.arima)
+```
+
+b.7 Upon inspecting the residuals they look like white noise. Distribution looks like it is centered around mean 0. ACF plot of the residuals also shows no real extreme values.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+checkresiduals(gasoline.arima)
+```
+b.8 The produced forecast looks good.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+h = 52
+t.new <- t.from2000[length(t.from2000)] + seq(h)/365.25
+t.pw1.new <- t.pw1.from2000[length(t.pw1.from2000)] + seq(h)/365.25
+t.pw2.new <- t.pw2.from2000[length(t.pw2.from2000)] + seq(h)/365.25
+xreg.new <- cbind(
+  t = t.new, 
+  t.pw1 = t.pw1.new, 
+  t.pw2 = t.pw2.new,
+  Fourier = fourier(
+    gasoline.from2000, K = gasoline.min, h = h
+    )
+  )
+
+fc <- forecast(
+  gasoline.arima,
+  xreg = xreg.new,
+  h = h
+)
+autoplot(fc)
+```
+
+### Exercise 1.1c
+c.1 For this model an ARIMA(1,1,0) model is used. One order in the auto regressive part and one degree of first differencing is involved.
+
+c.2 The estimates Beta 1 and Beta 2 tell us that the monthly total of heating degrees and the monthly total of cooling degrees both have a positive contribution to the model. It also tells us that the monthly total of cooling degrees plays a bigger factor in the model than the monthly total of heating degrees.
+
+c.3
+
+c.4 To forecast for the next 12 months we have to assume future values. 
+
+c.5 The problem with lagged errors is that the model's predictions are not linear functions of the estimated coefficients. The estimated coefficients in the ARIMA model that include lagged errors must be estimated by a nonlinear optimization method. It cannot be solved as a system of equations.
+
+### Exercise 1.1d
+d.1 A regression with ARIMA(1,0,3)(1,0,1)[12] has been chosen for this model. The number of Fourier Transformation pairs that minimizes the AIC value  is 6. The `auto.arima` model performs significantly better than the standard `tslm` model.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+retaildata <- readxl::read_excel("retail.xlsx", skip=1)
+myts <- ts(retaildata[,"A3349873A"], frequency=12, start=c(1982,4))
+lambda_retail <- BoxCox.lambda(myts)
+aic <- list()
+for(num in 1:6){
+  aic[num] <- CV(tslm(myts ~ trend + fourier(myts, K = num), lambda = lambda_retail))[["AICc"]]
+}
+aic.min <- which.min(unlist(aic))
+myts.ts_tslm <- tslm(myts ~ trend + fourier(myts, K = aic.min), lambda = lambda_retail)
+myts.ts_autoarima <- auto.arima(
+  myts, 
+  lambda = lambda_retail, 
+  xreg = cbind(Fourier = fourier(myts, K = aic.min), time = time(myts))
+  )
+autoplot(myts) + 
+  autolayer(myts.ts_tslm$fitted.values, series = 'TSLM') + 
+  autolayer(myts.ts_autoarima$fitted, series = 'Auto arima') +
+  ggtitle('Actual retail sales and fitted values') + xlab('Time') + ylab('Sales')
+```
+
+d.2 The residuals do not resemble white noise. The ACF plot shows a couple of big spikes, there also appears to be some cyclic pattern in the ACF plot. Distribution of the residuals is centered around a mean 0, but it is also a bit right-skewed.
+```{r echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+checkresiduals(myts.ts_autoarima)
+```
+
+d.3
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align="center" }
+myts.train <-window(myts, end=c(2010,12))
+myts.test <-window(myts, start=2011)
+
+autoplot(myts) +autolayer(myts.train, series="Training") + autolayer(myts.test, series="Test")
+fc <-snaive(myts.train)
+checkresiduals(fc)
+```
+
+
